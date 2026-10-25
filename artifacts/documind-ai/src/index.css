@@ -127,6 +127,18 @@ button:focus-visible, input:focus-visible, label:focus-within { outline: 3px sol
 .results-table input { width:100%; min-width:0; border:1px solid transparent; border-radius:6px; padding:8px; background:transparent; outline:none; color:#253d58; font-size:13px; font-weight:600; }
 .results-table input::placeholder { color:#9aa6b3; font-size:11px; font-weight:500; }
 .results-table input:focus { border-color:#a9c7df; background:#fff; box-shadow:0 0 0 2px #eaf3fa; }
+.validation-panel { margin-top:16px; padding:14px; border:1px solid #e5ebf1; border-radius:10px; background:#f9fbfd; }
+.validation-heading h3 { margin:0; color:#29435f; font-size:12px; font-weight:700; }
+.validation-heading p { margin:5px 0 0; color:#768497; font-size:10px; line-height:1.5; }
+.validation-list { display:grid; gap:7px; list-style:none; margin:12px 0 0; padding:0; }
+.validation-check { border:1px solid #e5ebf1; border-radius:8px; padding:10px 11px; background:#fff; }
+.validation-check.pass { border-color:#d6ebdd; background:#f5faf6; color:#357759; }
+.validation-check.warning { border-color:#eee0c4; background:#fffaf0; color:#8e692d; }
+.validation-check.info { border-color:#dce9f2; background:#f4f8fb; color:#41647f; }
+.validation-check-heading { display:flex; align-items:center; gap:7px; }
+.validation-check-heading strong { flex:1; color:#29435f; font-size:10px; }
+.validation-check-heading span { flex:none; color:inherit; font-size:9px; font-weight:700; }
+.validation-check p { margin:5px 0 0 22px; color:#66788b; font-size:10px; line-height:1.45; }
 .result-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:15px; padding-top:14px; border-top:1px solid #edf0f4; }
 .result-caption { display:flex; align-items:center; gap:7px; font-size:10px; color:#788697; }
 .result-actions { display:flex; gap:8px; }

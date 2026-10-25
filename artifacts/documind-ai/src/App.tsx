@@ -32,6 +32,7 @@ import {
   type InvoiceFieldKey,
   type InvoiceFields,
 } from '@/lib/pdf-extraction';
+import { validateGstInvoice } from '@/lib/gst-validation';
 
 const queryClient = new QueryClient();
 
@@ -125,9 +126,15 @@ function Home() {
       invoiceNumber: { value: 'INV-2024-0831', needsReview: false },
       invoiceDate: { value: '18 Sep 2024', needsReview: false },
       supplierName: { value: 'Northstar Office Supply', needsReview: false },
-      subtotal: { value: '$486.00', needsReview: false },
-      taxAmount: { value: '$43.74', needsReview: false },
-      totalAmount: { value: '$529.74', needsReview: false },
+      supplierGstin: { value: '27ABCDE1234F1Z5', needsReview: false },
+      buyerGstin: { value: '29PQRSX5678L1Z4', needsReview: false },
+      unassignedGstin: { value: '', needsReview: false },
+      subtotal: { value: '₹486.00', needsReview: false },
+      cgst: { value: '₹43.74', needsReview: false },
+      sgst: { value: '₹43.74', needsReview: false },
+      igst: { value: '', needsReview: false },
+      taxAmount: { value: '₹87.48', needsReview: false },
+      totalAmount: { value: '₹573.48', needsReview: false },
     });
   };
 
@@ -161,6 +168,16 @@ function Home() {
   };
 
   const hasReview = fields ? Object.values(fields).some((field) => field.needsReview) : false;
+  const validationChecks = fields
+    ? validateGstInvoice({
+        taxableAmount: fields.subtotal.value,
+        cgst: fields.cgst.value,
+        sgst: fields.sgst.value,
+        igst: fields.igst.value,
+        printedTaxAmount: fields.taxAmount.value,
+        totalAmount: fields.totalAmount.value,
+      })
+    : [];
 
   return (
     <div className="app-shell">
@@ -354,6 +371,38 @@ function Home() {
                       </tbody>
                     </table>
                   </div>
+                  <section className="validation-panel" aria-labelledby="gst-validation-title" data-testid="section-gst-validation">
+                    <div className="validation-heading">
+                      <div>
+                        <h3 id="gst-validation-title">GST arithmetic review</h3>
+                        <p>Checks use available amounts only. No GST rate is assumed, and arithmetic is not a legal compliance determination.</p>
+                      </div>
+                    </div>
+                    <ul className="validation-list">
+                      {validationChecks.map((check) => {
+                        const StatusIcon = check.status === 'pass'
+                          ? BadgeCheck
+                          : check.status === 'warning'
+                            ? AlertTriangle
+                            : CircleHelp;
+                        const statusLabel = check.status === 'pass'
+                          ? 'Match'
+                          : check.status === 'warning'
+                            ? 'Review'
+                            : 'Not checked';
+                        return (
+                          <li className={`validation-check ${check.status}`} key={check.id} data-testid={`gst-check-${check.id}`}>
+                            <div className="validation-check-heading">
+                              <StatusIcon size={15} aria-hidden="true" />
+                              <strong>{check.title}</strong>
+                              <span>{statusLabel}</span>
+                            </div>
+                            <p>{check.message}</p>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
                   <div className="result-footer">
                     <div className="result-caption" data-testid="text-result-editable">
                       <Check size={13} /> {isDemo ? 'Demonstration values · editable' : 'Review and edit values before use'}

@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { extractGstinAssignments } from './gst-validation';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -7,7 +8,13 @@ export type InvoiceFieldKey =
   | 'invoiceNumber'
   | 'invoiceDate'
   | 'supplierName'
+  | 'supplierGstin'
+  | 'buyerGstin'
+  | 'unassignedGstin'
   | 'subtotal'
+  | 'cgst'
+  | 'sgst'
+  | 'igst'
   | 'taxAmount'
   | 'totalAmount';
 
@@ -22,9 +29,15 @@ export const fieldLabels: Record<InvoiceFieldKey, string> = {
   invoiceNumber: 'Invoice Number',
   invoiceDate: 'Invoice Date',
   supplierName: 'Supplier Name',
-  subtotal: 'Subtotal',
-  taxAmount: 'Tax Amount',
-  totalAmount: 'Total Amount',
+  supplierGstin: 'Supplier GSTIN',
+  buyerGstin: 'Buyer GSTIN',
+  unassignedGstin: 'Unassigned GSTINs',
+  subtotal: 'Taxable amount / subtotal',
+  cgst: 'CGST',
+  sgst: 'SGST',
+  igst: 'IGST',
+  taxAmount: 'Tax amount (as printed)',
+  totalAmount: 'Total invoice amount',
 };
 
 const empty = (): ExtractedField => ({ value: '', needsReview: true });
@@ -33,7 +46,13 @@ export const blankInvoiceFields = (): InvoiceFields => ({
   invoiceNumber: empty(),
   invoiceDate: empty(),
   supplierName: empty(),
+  supplierGstin: empty(),
+  buyerGstin: empty(),
+  unassignedGstin: { value: '', needsReview: false },
   subtotal: empty(),
+  cgst: empty(),
+  sgst: empty(),
+  igst: empty(),
   taxAmount: empty(),
   totalAmount: empty(),
 });
@@ -43,7 +62,7 @@ function uniqueValues(values: string[]) {
 }
 
 function isFieldLabelOnly(value: string) {
-  return /^(?:invoice\s*(?:number|no\.?|#)|inv\s*(?:number|no\.?)|invoice\s*date|date\s*of\s*invoice|issued\s*on|supplier\s*name|supplier|vendor|seller|billed\s*by|sub\s*total|subtotal|tax\s*amount|sales\s*tax|vat|gst|total\s*amount|invoice\s*total|amount\s*due|grand\s*total|balance\s*due)\s*[:#\-–—]?$/i.test(value.trim());
+  return /^(?:invoice\s*(?:number|no\.?|#)|inv\s*(?:number|no\.?)|invoice\s*date|date\s*of\s*invoice|issued\s*on|supplier\s*name|supplier|vendor|seller|billed\s*by|buyer|customer|billed\s*to|bill\s*to|gstin|supplier\s*gstin|buyer\s*gstin|taxable\s*(?:amount|value)|sub\s*total|subtotal|cgst|sgst|igst|total\s*(?:tax|gst)(?:\s*amount)?|tax\s*amount|gst\s*amount|sales\s*tax|vat|total\s*amount|invoice\s*total|amount\s*due|grand\s*total|balance\s*due)\s*[:#\-–—@]?$/i.test(value.trim());
 }
 
 function collectLabelValues(
@@ -59,11 +78,11 @@ function collectLabelValues(
     const next = lines[index + 1]?.trim() ?? '';
     const candidates = [inline, next];
     for (const candidate of candidates) {
-      if (!candidate || isFieldLabelOnly(candidate) || (valuePattern && !valuePattern.test(candidate))) continue;
-      const cleaned = valuePattern ? candidate.match(valuePattern)?.[0] ?? '' : candidate;
-      if (cleaned) values.push(cleaned);
-      if (inline) break;
-      if (cleaned) break;
+      if (!candidate || isFieldLabelOnly(candidate)) continue;
+      const cleaned = valuePattern ? extractMoneyValue(candidate) : candidate;
+      if (!cleaned) continue;
+      values.push(cleaned);
+      break;
     }
   }
   return uniqueValues(values);
@@ -79,8 +98,15 @@ function setCandidate(field: ExtractedField, values: string[]) {
   }
 }
 
-function moneyPattern() {
-  return /(?:[$€£]\s*)?-?\d[\d,]*(?:\.\d{2})?/;
+const moneyValuePattern =
+  /(?:₹\s*|Rs\.?\s*|INR\s*|[$€£]\s*)?-?\d[\d,]*(?:\.\d{1,3})?/gi;
+
+function extractMoneyValue(candidate: string): string {
+  const matches = [...candidate.matchAll(moneyValuePattern)].filter((match) => {
+    const end = (match.index ?? 0) + match[0].length;
+    return candidate.slice(end).trimStart()[0] !== '%';
+  });
+  return matches.at(-1)?.[0].trim() ?? '';
 }
 
 export async function extractInvoiceFromPdf(file: File): Promise<{
@@ -104,6 +130,7 @@ export async function extractInvoiceFromPdf(file: File): Promise<{
   const text = pages.join('\n');
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const fields = blankInvoiceFields();
+  const gstins = extractGstinAssignments(text);
 
   setCandidate(
     fields.invoiceNumber,
@@ -115,19 +142,39 @@ export async function extractInvoiceFromPdf(file: File): Promise<{
   );
   setCandidate(
     fields.supplierName,
-    collectLabelValues(lines, /(?:supplier\s*name|supplier|vendor|seller|billed\s*by)\s*[:#\-–—]?\s*(.*)$/i),
+    collectLabelValues(lines, /(?:supplier\s*name|supplier(?!\s*gstin)|vendor|seller|billed\s*by)\s*[:#\-–—]?\s*(.*)$/i),
   );
+  setCandidate(fields.supplierGstin, gstins.supplier);
+  setCandidate(fields.buyerGstin, gstins.buyer);
+  const ambiguousGstins = [
+    ...gstins.unassigned,
+    ...(gstins.supplier.length > 1 ? gstins.supplier : []),
+    ...(gstins.buyer.length > 1 ? gstins.buyer : []),
+  ];
+  setCandidate(fields.unassignedGstin, uniqueValues(ambiguousGstins));
   setCandidate(
     fields.subtotal,
-    collectLabelValues(lines, /(?:sub\s*total|subtotal)\s*[:#\-–—]?\s*(.*)$/i, moneyPattern()),
+    collectLabelValues(lines, /(?:taxable\s*(?:amount|value)|sub\s*total|subtotal)\s*[:#\-–—]?\s*(.*)$/i, moneyValuePattern),
+  );
+  setCandidate(
+    fields.cgst,
+    collectLabelValues(lines, /\bcgst\b(?:\s*(?:tax|amount))?\s*[:#\-–—@]?\s*(.*)$/i, moneyValuePattern),
+  );
+  setCandidate(
+    fields.sgst,
+    collectLabelValues(lines, /\bsgst\b(?:\s*(?:tax|amount))?\s*[:#\-–—@]?\s*(.*)$/i, moneyValuePattern),
+  );
+  setCandidate(
+    fields.igst,
+    collectLabelValues(lines, /\bigst\b(?:\s*(?:tax|amount))?\s*[:#\-–—@]?\s*(.*)$/i, moneyValuePattern),
   );
   setCandidate(
     fields.taxAmount,
-    collectLabelValues(lines, /(?:tax\s*amount|sales\s*tax|vat|gst)\s*[:#\-–—]?\s*(.*)$/i, moneyPattern()),
+    collectLabelValues(lines, /(?:\btotal\s+(?:tax|gst)(?:\s+amount)?\b|\btax\s+amount\b|\bgst\s+amount\b|\bsales\s+tax\b|\bvat\s+amount\b)\s*[:#\-–—]?\s*(.*)$/i, moneyValuePattern),
   );
   setCandidate(
     fields.totalAmount,
-    collectLabelValues(lines, /(?:total\s*amount|invoice\s*total|amount\s*due|grand\s*total|balance\s*due)\s*[:#\-–—]?\s*(.*)$/i, moneyPattern()),
+    collectLabelValues(lines, /(?:total\s*amount|total\s*invoice\s*amount|invoice\s*total|amount\s*due|net\s*payable|amount\s*payable|grand\s*total|balance\s*due)\s*[:#\-–—]?\s*(.*)$/i, moneyValuePattern),
   );
 
   return { fields, pageCount: document.numPages, textLength: text.replace(/\s/g, '').length };
