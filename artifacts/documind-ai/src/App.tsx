@@ -35,50 +35,80 @@ import {
 } from '@/lib/pdf-extraction';
 import { validateGstInvoice } from '@/lib/gst-validation';
 import { downloadInvoiceWorkbook } from '@/lib/invoice-export';
+import { BatchReview } from '@/components/batch-review';
+import {
+  partitionInvoiceFiles,
+  processInvoiceBatch,
+  type InvoiceBatchRecord,
+} from '@/lib/bulk-invoice-processing';
 
 const queryClient = new QueryClient();
 
 function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
+  const [batchRecords, setBatchRecords] = useState<InvoiceBatchRecord[]>([]);
+  const [batchMode, setBatchMode] = useState(false);
   const [fields, setFields] = useState<InvoiceFields | null>(null);
   const [isDemo, setIsDemo] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; message: string } | null>(null);
   const [copyMessage, setCopyMessage] = useState('');
   const [exportMessage, setExportMessage] = useState('');
   const [isExporting, setIsExporting] = useState(false);
+  const batchSequence = useRef(0);
 
-  const selectFile = (candidate?: File) => {
-    if (isProcessing) return;
-    setNotice(null);
+  const selectFiles = (candidates: File[]) => {
+    if (isProcessing || isBatchProcessing || candidates.length === 0) return;
+    const { accepted, rejected } = partitionInvoiceFiles(candidates);
+    setNotice(
+      rejected.length > 0
+        ? {
+            kind: 'error',
+            message: `Some files were not added: ${rejected.join('; ')}.`,
+          }
+        : null,
+    );
     setCopyMessage('');
     setExportMessage('');
+
+    if (batchMode) {
+      if (accepted.length > 0) {
+        setQueuedFiles((current) => [...current, ...accepted]);
+      }
+      return;
+    }
+
     setFields(null);
     setIsDemo(false);
-    if (!candidate) return;
-    const isPdf = candidate.type === 'application/pdf' || candidate.name.toLowerCase().endsWith('.pdf');
-    if (!isPdf) {
+    setBatchRecords([]);
+    setQueuedFiles([]);
+    if (accepted.length === 1) {
+      setFile(accepted[0]);
+      setBatchMode(false);
+    } else if (accepted.length > 1) {
       setFile(null);
-      setNotice({ kind: 'error', message: 'That file is not a PDF. Choose a PDF invoice to continue.' });
-      if (inputRef.current) inputRef.current.value = '';
-      return;
-    }
-    if (candidate.size === 0) {
+      setQueuedFiles(accepted);
+      setBatchMode(true);
+    } else {
       setFile(null);
-      setNotice({ kind: 'error', message: 'This file is empty. Choose a PDF with invoice content.' });
-      return;
+      setBatchMode(false);
     }
-    setFile(candidate);
   };
 
-  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => selectFile(event.target.files?.[0]);
+  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const candidates = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    selectFiles(candidates);
+  };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
-    selectFile(event.dataTransfer.files?.[0]);
+    selectFiles(Array.from(event.dataTransfer.files));
   };
 
   const analyzeFile = async () => {
@@ -122,9 +152,61 @@ function Home() {
     }
   };
 
+  const analyzeBatch = async () => {
+    if (
+      queuedFiles.length === 0 ||
+      isProcessing ||
+      isBatchProcessing
+    ) {
+      return;
+    }
+
+    const batchNumber = ++batchSequence.current;
+    const records: InvoiceBatchRecord[] = queuedFiles.map(
+      (selectedFile, index) => ({
+        id: `batch-${batchNumber}-${index + 1}`,
+        file: selectedFile,
+        status: 'queued',
+        fields: null,
+        error: null,
+        note: null,
+      }),
+    );
+
+    setFile(null);
+    setFields(null);
+    setIsDemo(false);
+    setNotice(null);
+    setCopyMessage('');
+    setExportMessage('');
+    setQueuedFiles([]);
+    setBatchMode(true);
+    setBatchRecords((current) => [...current, ...records]);
+    setIsBatchProcessing(true);
+
+    try {
+      await processInvoiceBatch(
+        records,
+        extractInvoiceFromPdf,
+        (id, update) => {
+          setBatchRecords((current) =>
+            current.map((record) =>
+              record.id === id ? { ...record, ...update } : record,
+            ),
+          );
+        },
+      );
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
   const showDemo = () => {
     if (inputRef.current) inputRef.current.value = '';
     setFile(null);
+    setQueuedFiles([]);
+    setBatchRecords([]);
+    setBatchMode(false);
     setNotice(null);
     setCopyMessage('');
     setExportMessage('');
@@ -147,6 +229,9 @@ function Home() {
 
   const clearAll = () => {
     setFile(null);
+    setQueuedFiles([]);
+    setBatchRecords([]);
+    setBatchMode(false);
     setFields(null);
     setNotice(null);
     setCopyMessage('');
@@ -155,11 +240,58 @@ function Home() {
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  const clearBatch = () => {
+    if (isBatchProcessing) return;
+    setFile(null);
+    setQueuedFiles([]);
+    setBatchRecords([]);
+    setBatchMode(false);
+    setFields(null);
+    setIsDemo(false);
+    setNotice(null);
+    setCopyMessage('');
+    setExportMessage('');
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const removeQueuedFile = (index: number) => {
+    setQueuedFiles((current) =>
+      current.filter((_, fileIndex) => fileIndex !== index),
+    );
+  };
+
+  const removeBatchInvoice = (id: string) => {
+    if (isBatchProcessing) return;
+    setBatchRecords((current) =>
+      current.filter((record) => record.id !== id),
+    );
+  };
+
   const updateField = (key: InvoiceFieldKey, value: string) => {
     setFields((current) => current ? {
       ...current,
       [key]: { value, needsReview: value.trim().length === 0 },
     } : current);
+  };
+
+  const updateBatchField = (
+    id: string,
+    key: InvoiceFieldKey,
+    value: string,
+  ) => {
+    setBatchRecords((current) =>
+      current.map((record) =>
+        record.id === id && record.fields
+          ? {
+              ...record,
+              fields: {
+                ...record.fields,
+                [key]: { value, needsReview: value.trim().length === 0 },
+              },
+            }
+          : record,
+      ),
+    );
   };
 
   const copyFields = async () => {
@@ -184,6 +316,32 @@ function Home() {
       setExportMessage('Excel file downloaded. Your invoice stays in this browser.');
     } catch {
       setExportMessage('Could not create the Excel file. Try again after reviewing the invoice.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const exportSuccessfulBatch = async () => {
+    if (isExporting) return;
+    const successfulInvoices = batchRecords
+      .filter(
+        (record): record is InvoiceBatchRecord & { fields: InvoiceFields } =>
+          record.status === 'success' && record.fields !== null,
+      )
+      .map((record) => ({ fields: record.fields, isDemo: false }));
+    if (successfulInvoices.length === 0) return;
+
+    setIsExporting(true);
+    setExportMessage('');
+    try {
+      await downloadInvoiceWorkbook(successfulInvoices);
+      setExportMessage(
+        `Excel file downloaded with ${successfulInvoices.length} successful invoice${successfulInvoices.length === 1 ? '' : 's'}.`,
+      );
+    } catch {
+      setExportMessage(
+        'Could not create the Excel file. Try again after reviewing the batch.',
+      );
     } finally {
       setIsExporting(false);
     }

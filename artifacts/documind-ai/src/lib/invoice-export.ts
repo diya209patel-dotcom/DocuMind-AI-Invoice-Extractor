@@ -59,8 +59,16 @@ function numericOrTextAmount(value: string): number | string | null {
   return minorUnits === null ? trimmed : minorUnits / 100;
 }
 
-function getValidationChecks(fields: InvoiceFields): GstValidationCheck[] {
-  return validateGstInvoice({
+export type InvoiceReviewSummary = {
+  validationStatus: string;
+  reviewWarnings: string[];
+  checks: GstValidationCheck[];
+};
+
+export function summarizeReviewedInvoice(
+  fields: InvoiceFields,
+): InvoiceReviewSummary {
+  const checks = validateGstInvoice({
     taxableAmount: fields.subtotal.value,
     cgst: fields.cgst.value,
     sgst: fields.sgst.value,
@@ -68,12 +76,7 @@ function getValidationChecks(fields: InvoiceFields): GstValidationCheck[] {
     printedTaxAmount: fields.taxAmount.value,
     totalAmount: fields.totalAmount.value,
   });
-}
 
-function getReviewWarnings(
-  fields: InvoiceFields,
-  checks: GstValidationCheck[],
-): string[] {
   const warnings: string[] = [];
 
   (Object.entries(fields) as [InvoiceFieldKey, ExtractedField][]).forEach(
@@ -97,13 +100,6 @@ function getReviewWarnings(
     .filter((check) => check.status !== 'pass')
     .forEach((check) => warnings.push(`${check.title}: ${check.message}`));
 
-  return [...new Set(warnings)];
-}
-
-function getValidationStatus(
-  fields: InvoiceFields,
-  checks: GstValidationCheck[],
-): string {
   const hasFieldReview = Object.entries(fields).some(
     ([key, field]) =>
       key !== 'unassignedGstin' && (field as ExtractedField).needsReview,
@@ -111,16 +107,22 @@ function getValidationStatus(
   const hasWarning = checks.some((check) => check.status === 'warning');
   const hasInfo = checks.some((check) => check.status === 'info');
 
-  if (hasFieldReview || hasWarning) return 'Review required';
-  if (hasInfo) return 'Partially checked';
-  return 'Arithmetic checks match';
+  const validationStatus = hasFieldReview || hasWarning
+    ? 'Review required'
+    : hasInfo
+      ? 'Partially checked'
+      : 'Arithmetic checks match';
+
+  return {
+    validationStatus,
+    reviewWarnings: [...new Set(warnings)],
+    checks,
+  };
 }
 
 function buildRow(invoice: ReviewedInvoice): (string | number | null)[] {
   const { fields } = invoice;
-  const checks = getValidationChecks(fields);
-  const warnings = getReviewWarnings(fields, checks);
-  const validationStatus = getValidationStatus(fields, checks);
+  const { reviewWarnings, validationStatus } = summarizeReviewedInvoice(fields);
 
   return [
     fields.invoiceNumber.value.trim() || null,
@@ -136,7 +138,7 @@ function buildRow(invoice: ReviewedInvoice): (string | number | null)[] {
     invoice.isDemo
       ? `Demonstration data — ${validationStatus}`
       : validationStatus,
-    warnings.length > 0 ? warnings.join('\n') : null,
+    reviewWarnings.length > 0 ? reviewWarnings.join('\n') : null,
   ];
 }
 
