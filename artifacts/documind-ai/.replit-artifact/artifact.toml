@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "DocuMind AI"
+description = "A mobile-friendly invoice extraction app for small businesses. Select a text-based invoice PDF and extract invoice number, date, supplier, subtotal, tax, and total locally in the browser, then review and edit the results."
+version = "1.0.0"
+id = "artifacts/documind-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18685
+
+[services.development]
+run = "pnpm --filter @workspace/documind-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/documind-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/documind-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18685"
+BASE_PATH = "/"
