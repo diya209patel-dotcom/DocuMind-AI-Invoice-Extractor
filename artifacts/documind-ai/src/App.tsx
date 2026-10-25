@@ -18,6 +18,7 @@ import {
   CircleHelp,
   FileText,
   FileUp,
+  FileSpreadsheet,
   LockKeyhole,
   RotateCcw,
   ShieldCheck,
@@ -33,6 +34,7 @@ import {
   type InvoiceFields,
 } from '@/lib/pdf-extraction';
 import { validateGstInvoice } from '@/lib/gst-validation';
+import { downloadInvoiceWorkbook } from '@/lib/invoice-export';
 
 const queryClient = new QueryClient();
 
@@ -45,11 +47,14 @@ function Home() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; message: string } | null>(null);
   const [copyMessage, setCopyMessage] = useState('');
+  const [exportMessage, setExportMessage] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
 
   const selectFile = (candidate?: File) => {
     if (isProcessing) return;
     setNotice(null);
     setCopyMessage('');
+    setExportMessage('');
     setFields(null);
     setIsDemo(false);
     if (!candidate) return;
@@ -81,6 +86,7 @@ function Home() {
     setNotice(null);
     setFields(null);
     setIsDemo(false);
+    setExportMessage('');
     setIsProcessing(true);
     try {
       const result = await extractInvoiceFromPdf(file);
@@ -121,6 +127,7 @@ function Home() {
     setFile(null);
     setNotice(null);
     setCopyMessage('');
+    setExportMessage('');
     setIsDemo(true);
     setFields({
       invoiceNumber: { value: 'INV-2024-0831', needsReview: false },
@@ -143,6 +150,7 @@ function Home() {
     setFields(null);
     setNotice(null);
     setCopyMessage('');
+    setExportMessage('');
     setIsDemo(false);
     if (inputRef.current) inputRef.current.value = '';
   };
@@ -164,6 +172,20 @@ function Home() {
       setCopyMessage('Fields copied to clipboard.');
     } catch {
       setCopyMessage('Clipboard access is unavailable in this browser.');
+    }
+  };
+
+  const exportReviewedInvoice = async () => {
+    if (!fields || isExporting) return;
+    setIsExporting(true);
+    setExportMessage('');
+    try {
+      await downloadInvoiceWorkbook([{ fields, isDemo }]);
+      setExportMessage('Excel file downloaded. Your invoice stays in this browser.');
+    } catch {
+      setExportMessage('Could not create the Excel file. Try again after reviewing the invoice.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -408,6 +430,16 @@ function Home() {
                       <Check size={13} /> {isDemo ? 'Demonstration values · editable' : 'Review and edit values before use'}
                     </div>
                     <div className="result-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={exportReviewedInvoice}
+                        disabled={isExporting}
+                        data-testid="button-export-excel"
+                      >
+                        <FileSpreadsheet size={14} />
+                        {isExporting ? 'Preparing…' : 'Export to Excel'}
+                      </button>
                       <button className="secondary-button" type="button" onClick={copyFields} data-testid="button-copy-fields">
                         {copyMessage.startsWith('Fields copied') ? <Check size={14} /> : <FileText size={14} />}
                         {copyMessage.startsWith('Fields copied') ? 'Copied' : 'Copy fields'}
@@ -417,6 +449,11 @@ function Home() {
                       </button>
                     </div>
                   </div>
+                  {exportMessage && (
+                    <div className="result-caption" role="status" data-testid="status-export">
+                      {exportMessage}
+                    </div>
+                  )}
                   {copyMessage && <div className="result-caption" role="status" data-testid="status-copy-fields" style={{ marginTop: 8 }}>{copyMessage}</div>}
                 </>
               )}

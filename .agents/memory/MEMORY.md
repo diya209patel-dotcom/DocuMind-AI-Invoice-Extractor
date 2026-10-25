@@ -1,0 +1,1 @@
+- [Invoice privacy and paid-service scope](invoice-privacy.md) — keep extraction and export local; do not add paid APIs, services, or subscriptions.
